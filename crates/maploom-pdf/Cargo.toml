@@ -3,7 +3,6 @@ name = "maploom-pdf"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-license-file.workspace = true
 repository.workspace = true
 description = "Render vector tiles to PDF using typed Maploom drawing rules"
 readme = "README.md"

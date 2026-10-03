@@ -1,0 +1,16 @@
+[package]
+name = "maploom-maplibre"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "MapLibre layer and filter JSON adapters for Maploom"
+readme = "README.md"
+keywords = ["maplibre", "style", "map", "gis"]
+categories = ["graphics"]
+include = ["src/**", "README.md", "Cargo.toml", "LICENSE*"]
+
+[dependencies]
+maploom-core.workspace = true
+serde_json.workspace = true

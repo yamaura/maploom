@@ -1,0 +1,18 @@
+[package]
+name = "maploom-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Typed map layers and backend-independent filter expressions"
+readme = "README.md"
+keywords = ["style", "gis"]
+categories = ["graphics"]
+include = ["src/**", "README.md", "Cargo.toml", "LICENSE*"]
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

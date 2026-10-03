@@ -1,0 +1,20 @@
+[package]
+name = "maploom-filter-fast-mvt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "fast-mvt feature adapters for Maploom filters"
+readme = "README.md"
+keywords = ["map", "mvt", "filter", "gis"]
+categories = ["graphics"]
+include = ["src/**", "README.md", "Cargo.toml", "LICENSE*"]
+
+[dependencies]
+maploom-core.workspace = true
+fast-mvt.workspace = true
+geo-types.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

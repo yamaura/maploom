@@ -1,0 +1,22 @@
+[package]
+name = "maploom-pdf"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+license-file.workspace = true
+repository.workspace = true
+description = "Render vector tiles to PDF using typed Maploom drawing rules"
+readme = "README.md"
+keywords = ["map", "mvt", "pdf", "gis"]
+categories = ["graphics"]
+include = ["src/**", "examples/**", "README.md", "Cargo.toml", "LICENSE*"]
+
+[dependencies]
+fast-mvt.workspace = true
+geo-types.workspace = true
+maploom-core.workspace = true
+maploom-filter-fast-mvt.workspace = true
+pdf-writer = "0.14.0"
+
+[dev-dependencies]
+serde_json.workspace = true

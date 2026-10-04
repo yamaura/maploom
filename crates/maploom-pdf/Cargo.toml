@@ -8,14 +8,28 @@ description = "Render vector tiles to PDF using typed Maploom drawing rules"
 readme = "README.md"
 keywords = ["map", "mvt", "pdf", "gis"]
 categories = ["graphics"]
-include = ["src/**", "examples/**", "README.md", "Cargo.toml", "LICENSE*"]
+include = ["src/**", "examples/**", "tests/**", "README.md", "Cargo.toml", "LICENSE*"]
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(docsrs)'] }
+
+[features]
+default = ["fonts"]
+fonts = ["dep:maploom-pdf-fonts"]
 
 [dependencies]
+thiserror.workspace = true
 fast-mvt.workspace = true
 geo-types.workspace = true
 maploom-core.workspace = true
 maploom-filter-fast-mvt.workspace = true
 pdf-writer = "0.14.0"
+maploom-pdf-fonts = { version = "0.2.0", path = "../maploom-pdf-fonts", optional = true }
 
 [dev-dependencies]
+font-test-data = "0.10.0"
 serde_json.workspace = true

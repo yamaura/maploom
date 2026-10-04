@@ -1,6 +1,44 @@
 use super::*;
 use maploom_core::{Feature, FeatureValue, GeometryType, LineLayer};
 
+#[test]
+fn imports_point_symbols_and_preserves_literal_and_template_text() {
+    let layer = from_layer(&json!({"id":"labels","type":"symbol","source":"base","source-layer":"places",
+        "layout":{"text-field":"Road: {kind}","text-font":["Noto Sans"],"text-max-width":0,
+        "text-anchor":"bottom","text-offset":[0,-0.2]},"paint":{"text-color":"#000000","text-halo-width":1}})).unwrap();
+    let Layer::Text(text) = &layer else {
+        panic!("expected native text");
+    };
+    assert_eq!(
+        text.layout
+            .field
+            .evaluate(&Road {
+                kind: "road",
+                id: None
+            })
+            .unwrap(),
+        "Road: road"
+    );
+    assert_eq!(from_layer(&to_layer(&layer).unwrap()).unwrap(), layer);
+    let literal = maploom_core::TextField::from("Keep {braces}");
+    assert_eq!(
+        to_text_field(&literal).unwrap(),
+        json!(["literal", "Keep {braces}"])
+    );
+    assert_eq!(
+        from_text_field(&to_text_field(&literal).unwrap()).unwrap(),
+        literal
+    );
+    for layout in [
+        json!({"text-field":"name","text-font":["Noto Sans"]}),
+        json!({"text-field":"name","text-font":["Noto Sans"],"text-max-width":10}),
+        json!({"text-field":"name","text-font":["Noto Sans"],"text-max-width":0,"symbol-placement":"line"}),
+        json!({"text-field":"name","text-font":["Noto Sans"],"text-max-width":0,"icon-image":"airport"}),
+    ] {
+        assert!(from_layer(&json!({"id":"bad","type":"symbol","source":"base","source-layer":"places","layout":layout})).is_err());
+    }
+}
+
 struct Road {
     kind: &'static str,
     id: Option<f64>,

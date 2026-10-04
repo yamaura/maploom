@@ -1,17 +1,17 @@
-use super::{Expr, Filter, MathOp, OrderedOp, Type, Value};
+use super::{Expr, Expression, MathOp, OrderedOp, Type, Value};
 use crate::serde_support::{arguments, finish, required};
 use serde::de::{Error, IntoDeserializer, MapAccess, SeqAccess, Visitor};
 use serde::ser::SerializeSeq;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt;
 
-impl Serialize for Filter {
+impl Serialize for Expression {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.expression.serialize(serializer)
     }
 }
 
-impl<'de> Deserialize<'de> for Filter {
+impl<'de> Deserialize<'de> for Expression {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         Expr::deserialize(deserializer).map(|expression| Self { expression })
     }
@@ -85,6 +85,25 @@ impl<'de> Visitor<'de> for ExprVisitor {
             }
             "in" => Expr::In(required(&mut seq)?, required(&mut seq)?),
             "!" => Expr::Not(required(&mut seq)?),
+            "to-string" => Expr::ToString(required(&mut seq)?),
+            "concat" => return arguments(&mut seq, 0).map(Expr::Concat),
+            "case" => {
+                let args: Vec<Expr> = arguments(&mut seq, 3)?;
+                if args.len() % 2 != 1 {
+                    return Err(A::Error::custom(
+                        "case requires condition/output pairs and a fallback",
+                    ));
+                }
+                let mut args = args.into_iter();
+                let mut branches = Vec::new();
+                while args.len() > 1 {
+                    branches.push((args.next().unwrap(), args.next().unwrap()));
+                }
+                return Ok(Expr::Case {
+                    branches,
+                    fallback: Box::new(args.next().unwrap()),
+                });
+            }
             "to-boolean" => Expr::ToBoolean(required(&mut seq)?),
             "all" => return arguments(&mut seq, 0).map(Expr::All),
             "any" => return arguments(&mut seq, 0).map(Expr::Any),
@@ -112,7 +131,7 @@ impl<'de> Visitor<'de> for ExprVisitor {
             "match" => return read_match(&mut seq),
             _ => {
                 return Err(A::Error::custom(format!(
-                    "unsupported Maploom filter operator {operator:?}"
+                    "unsupported Maploom expression operator {operator:?}"
                 )));
             }
         };
@@ -293,6 +312,9 @@ impl Serialize for Expr {
             Self::Not(_) => "!",
             Self::Match { .. } => "match",
             Self::Coalesce(_) => "coalesce",
+            Self::ToString(_) => "to-string",
+            Self::Concat(_) => "concat",
+            Self::Case { .. } => "case",
             Self::ToBoolean(_) => "to-boolean",
             Self::ToNumber(_) => "to-number",
             Self::TypeAssert(kind, _) => kind.as_str(),
@@ -317,8 +339,11 @@ impl Serialize for Expr {
                 seq.serialize_element(&Operand(left))?;
                 seq.serialize_element(right)?;
             }
-            Self::Not(expr) | Self::ToBoolean(expr) => seq.serialize_element(expr)?,
+            Self::Not(expr) | Self::ToBoolean(expr) | Self::ToString(expr) => {
+                seq.serialize_element(expr)?
+            }
             Self::All(exprs)
+            | Self::Concat(exprs)
             | Self::Any(exprs)
             | Self::Coalesce(exprs)
             | Self::ToNumber(exprs)
@@ -327,6 +352,13 @@ impl Serialize for Expr {
                 for expr in exprs {
                     seq.serialize_element(expr)?;
                 }
+            }
+            Self::Case { branches, fallback } => {
+                for (condition, output) in branches {
+                    seq.serialize_element(condition)?;
+                    seq.serialize_element(output)?;
+                }
+                seq.serialize_element(fallback)?;
             }
             Self::Match {
                 input,
@@ -346,5 +378,87 @@ impl Serialize for Expr {
             }
         }
         seq.end()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Feature, FeatureValue, Filter, GeometryType};
+
+    struct EmptyFeature;
+
+    impl Feature for EmptyFeature {
+        fn property(&self, _: &str) -> Option<FeatureValue<'_>> {
+            None
+        }
+        fn id(&self) -> Option<FeatureValue<'_>> {
+            None
+        }
+        fn geometry_type(&self) -> GeometryType {
+            GeometryType::Unknown
+        }
+    }
+
+    #[test]
+    fn match_streams_operator_named_labels_and_expression_fallbacks() {
+        for (source, expected) in [
+            (r#"["match", "get", ["get", "kind"], true, false]"#, true),
+            (
+                r#"["match", "other", ["get", "kind"], false, ["==", 1, 1]]"#,
+                true,
+            ),
+            (
+                r#"["match", "other", "road", true, ["get", "missing"]]"#,
+                false,
+            ),
+            (
+                r#"["match", "other", "road", false, ["!", ["has", "missing"]]]"#,
+                true,
+            ),
+            (
+                r#"["match", "other", "road", false, ["literal", true]]"#,
+                true,
+            ),
+            (
+                r#"["match", "other", "road", false, ["to-boolean", ["literal", [1]]]]"#,
+                true,
+            ),
+        ] {
+            let filter: Filter = serde_json::from_str(source).unwrap();
+            assert_eq!(filter.matches(&EmptyFeature), expected, "{source}");
+            let encoded = serde_json::to_string(&filter).unwrap();
+            assert_eq!(serde_json::from_str::<Filter>(&encoded).unwrap(), filter);
+        }
+    }
+
+    #[test]
+    fn literal_collections_preserve_nested_data() {
+        let source = r#"["==", ["literal", {"items": ["get", null, true, 2]}],
+            ["literal", {"items": ["get", null, true, 2]}]]"#;
+        let filter: Filter = serde_json::from_str(source).unwrap();
+        assert!(filter.evaluate(&EmptyFeature).unwrap());
+        let encoded = serde_json::to_string(&filter).unwrap();
+        assert_eq!(serde_json::from_str::<Filter>(&encoded).unwrap(), filter);
+    }
+
+    #[test]
+    fn malformed_expression_streams_are_rejected() {
+        for source in [
+            r#"[]"#,
+            r#"["get"]"#,
+            r#"["get", "kind", 1]"#,
+            r#"["id", 1]"#,
+            r#"["literal", 1, 2]"#,
+            r#"["==", 1]"#,
+            r#"["!", true, false]"#,
+            r#"["match", "road", true]"#,
+            r#"["match", "road", "road", true]"#,
+            r#"["match", "road", "road", true, ["get", "kind", 1]]"#,
+        ] {
+            assert!(
+                serde_json::from_str::<Filter>(source).is_err(),
+                "accepted {source}"
+            );
+        }
     }
 }

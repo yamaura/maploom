@@ -1,12 +1,14 @@
 #![doc = include_str!("../README.md")]
 
 mod color;
+pub mod expression;
+pub use expression::{Expression, Value};
 pub mod filter;
 pub use filter::{EvalError, Feature, FeatureValue, Filter, GeometryType};
 mod number;
 mod serde_support;
-#[cfg(test)]
-mod tests;
+mod text;
+pub use text::{TextAnchor, TextField, TextLayer, TextLayout, TextPaint};
 
 pub use color::Rgb;
 pub use number::Number;
@@ -15,12 +17,13 @@ use serde::{Deserialize, Serialize};
 /// A Maploom drawing layer, independent of PDF optional content groups (OCGs).
 ///
 /// Serialization uses Maploom layer JSON (`type`, `source-layer`, `paint`,
-/// `layout`). Only the supported fill/line subset can be deserialized.
+/// `layout`). Text is a native drawing layer; MapLibre symbols use the adapter.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Layer {
     Fill(FillLayer),
     Line(LineLayer),
+    Text(TextLayer),
 }
 
 impl Layer {
@@ -28,6 +31,7 @@ impl Layer {
         match self {
             Self::Fill(layer) => &layer.id,
             Self::Line(layer) => &layer.id,
+            Self::Text(layer) => &layer.id,
         }
     }
 
@@ -35,6 +39,7 @@ impl Layer {
         match self {
             Self::Fill(layer) => layer.source.as_deref(),
             Self::Line(layer) => layer.source.as_deref(),
+            Self::Text(layer) => layer.source.as_deref(),
         }
     }
 
@@ -42,6 +47,7 @@ impl Layer {
         match self {
             Self::Fill(layer) => &layer.source_layer,
             Self::Line(layer) => &layer.source_layer,
+            Self::Text(layer) => &layer.source_layer,
         }
     }
 
@@ -49,6 +55,7 @@ impl Layer {
         match self {
             Self::Fill(layer) => layer.filter.as_ref(),
             Self::Line(layer) => layer.filter.as_ref(),
+            Self::Text(layer) => layer.filter.as_ref(),
         }
     }
 
@@ -57,6 +64,7 @@ impl Layer {
         match self {
             Self::Fill(layer) => (layer.minzoom, layer.maxzoom),
             Self::Line(layer) => (layer.minzoom, layer.maxzoom),
+            Self::Text(layer) => (layer.minzoom, layer.maxzoom),
         }
     }
 
@@ -64,6 +72,7 @@ impl Layer {
         match self {
             Self::Fill(layer) => layer.layout.visibility,
             Self::Line(layer) => layer.layout.visibility,
+            Self::Text(layer) => layer.layout.visibility,
         }
     }
 }

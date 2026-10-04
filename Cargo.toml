@@ -3,7 +3,7 @@ members = ["crates/*"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://gitlab.com/yamaura/timezone-map"
@@ -13,5 +13,6 @@ fast-mvt = "0.6.2"
 geo-types = "0.7.19"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-maploom-core = { version = "0.1.0", path = "crates/maploom-core" }
-maploom-filter-fast-mvt = { version = "0.1.0", path = "crates/maploom-filter-fast-mvt" }
+thiserror = "2"
+maploom-core = { version = "0.2.0", path = "crates/maploom-core" }
+maploom-filter-fast-mvt = { version = "0.2.0", path = "crates/maploom-filter-fast-mvt" }

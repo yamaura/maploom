@@ -1,6 +1,6 @@
 # maploom-filter-fast-mvt
 
-Borrowed fast-mvt adapters for `maploom-core` filters. Parsing and evaluation
+Borrowed fast-mvt adapters for `maploom-core` filters and text expressions. Parsing and evaluation
 live in core; this crate supplies feature property, ID and geometry access.
 
 ```rust

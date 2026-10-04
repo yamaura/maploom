@@ -1,8 +1,6 @@
 # maploom-core
 
-The library depends only on `serde`; `serde_json` is used in examples and tests.
-
-Typed `Layer::Fill(FillLayer)` and `Layer::Line(LineLayer)` values for map
+Typed `Layer::Fill(FillLayer)`, `Layer::Line(LineLayer)` and `Layer::Text(TextLayer)` values for map
 drawing. These are drawing layers, independent of PDF optional content groups.
 A slice of layers is drawn in order.
 
@@ -36,7 +34,7 @@ let layer: Layer = serde_json::from_str(r##"{
 # Ok::<(), serde_json::Error>(())
 ```
 
-Fill/line paint and layout have separate types, so incompatible paint cannot be
+Fill/line/text paint and layout have separate types, so incompatible paint cannot be
 assigned in Rust. Unknown fields, mismatched paint, unsupported layer types,
 unsupported expressions and invalid color strings fail during deserialization;
 they are not silently dropped. Layer JSON describes drawing rules rather than
@@ -64,10 +62,6 @@ allows source-agnostic rendering. A named source restricts drawing to features
 from that source. PDF rendering validates zoom bounds, nonempty identifiers,
 opacity, width and dash lengths, including values constructed directly in Rust.
 
-The old flat `RenderRule` format and `compile_render_rules` API have been removed.
-Use `type`, `source-layer`, `paint` and `layout` in JSON, or the native Rust types.
-
-
 Filter parsing and evaluation are backend-independent. `Feature`, `FeatureValue`
 and `GeometryType` describe read-only feature access without MVT or PDF dependencies.
 Use `maploom-filter-fast-mvt::FastMvtFeature` to evaluate fast-mvt features.
@@ -82,3 +76,33 @@ let json = serde_json::to_value(&roads)?;
 assert_eq!(json["filter"], json!(["==", ["get", "kind"], "road"]));
 # Ok::<(), Box<dyn std::error::Error>>(())
 ```
+
+## Text and shared expressions
+
+`TextLayer::new(id, source_layer, field)` represents horizontal point labels.
+`TextLayout` owns `field`, ordered font-family names, size, anchor, em offset,
+line height, padding and collision flags. Font families must be supplied
+explicitly; a renderer decides how to register the corresponding font data.
+`TextPaint` owns color, opacity and halo color/width. Native JSON uses
+`"type": "text"`; the MapLibre adapter converts point `symbol` layers.
+
+```rust
+use maploom_core::{Expression, Layer, TextField, TextLayer};
+let field = TextField::new(Expression::concat([
+    Expression::literal("Airport: "), Expression::property("iata_code").to_text(),
+]));
+let mut layer = TextLayer::new("airport-labels", "airports", field);
+layer.layout.fonts = vec!["Noto Sans".into()];
+let layer = Layer::Text(layer);
+assert_eq!(layer.source_layer(), "airports");
+```
+
+`Expression` is the shared, validated feature-expression tree used by `Filter`
+and `TextField`. `evaluate` returns `Value`; the wrappers impose boolean and
+string/null results respectively. A text-field string is always a literal;
+`TextField::property` converts a feature property to text. Null yields no label,
+while any other non-string result produces an evaluation error.
+
+Expressions support `to-string`, `concat`, short-circuit `case`, `coalesce`,
+`match`, property access, comparisons and existing filter arithmetic. Collections
+cannot be implicitly converted to text; convert scalar values explicitly.

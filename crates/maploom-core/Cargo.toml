@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Typed map layers and backend-independent filter expressions"
+description = "Typed geometry/text map layers and backend-independent feature expressions"
 readme = "README.md"
 keywords = ["style", "gis"]
 categories = ["graphics"]
-include = ["src/**", "README.md", "Cargo.toml", "LICENSE*"]
+include = ["src/**", "tests/**", "README.md", "Cargo.toml", "LICENSE*"]
 
 [dependencies]
+thiserror.workspace = true
 serde.workspace = true
 
 [dev-dependencies]

@@ -50,3 +50,15 @@ impl From<Rgb> for String {
         format!("#{:02x}{:02x}{:02x}", color.r, color.g, color.b)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_colors_are_rejected() {
+        for color in ["#a日ab", "transparent", "red", "#abcd", "#gggggg"] {
+            assert!(color.parse::<Rgb>().is_err());
+        }
+    }
+}

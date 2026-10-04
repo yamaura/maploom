@@ -1,0 +1,23 @@
+[package]
+name = "maploom-pdf-fonts"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Font registration, Unicode text shaping and font embedding for Maploom PDFs"
+readme = "README.md"
+keywords = ["font", "pdf", "text", "unicode"]
+categories = ["graphics"]
+include = ["src/**", "tests/**", "README.md", "Cargo.toml", "LICENSE*"]
+
+[dependencies]
+thiserror.workspace = true
+maploom-core.workspace = true
+pdf-writer = "0.14.0"
+rustybuzz = "0.20.1"
+unicode-bidi = "0.3.18"
+unicode-script = "0.5.8"
+unicode-segmentation = "1.13"
+
+[dev-dependencies]
+font-test-data = "0.10.0"

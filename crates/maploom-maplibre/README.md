@@ -1,7 +1,7 @@
 # maploom-maplibre
 
 MapLibre JSON adapters for Maploom. This crate imports and exports the supported
-fill/line layer subset and translates legacy property filters into Maploom
+fill/line/point-text layer subset and translates legacy property filters into Maploom
 expressions. Maploom expression syntax is inspired by MapLibre, while its
 evaluation behavior is defined independently. This adapter handles conversion
 between the supported formats. It depends on `maploom-core` and `serde_json`, with no MapLibre
@@ -37,7 +37,7 @@ assert_eq!(json["filter"], json!(["in", ["get", "kind"], ["literal", ["road"]]])
 
 Supported expressions include property/ID/geometry access, comparisons,
 membership, boolean operations, `match`, `coalesce`, type assertions, conversions
-and arithmetic. Constant numeric paint and linear/step zoom paint are supported.
+`to-string`, `concat`, `case` and arithmetic. Constant numeric paint and linear/step zoom paint are supported.
 Unknown fields, unsupported operators (including `within`, collators and
 object-valued `get`/`has`), unsupported layer types and mixed legacy/expression
 filters produce errors rather than being dropped. A complete style document,
@@ -51,3 +51,23 @@ Full expression compatibility and renderer parity are not guaranteed.
 
 References: [MapLibre layer format](https://maplibre.org/maplibre-style-spec/layers/)
 and [filter syntax classification](https://github.com/maplibre/maplibre-style-spec/blob/main/src/feature_filter/index.ts).
+
+## Point text symbols
+
+`from_layer` imports `type: "symbol"` as native `Layer::Text`; `to_layer` exports
+it as a point symbol. Supply explicit `text-font` names and
+`text-max-width: 0` to disable automatic wrapping. Supported text properties are
+field, size, anchor, offset, line height, padding, allow-overlap, ignore-placement,
+visibility, RGB color, opacity and halo color/width. Explicit placement/alignment
+must be `point` / `viewport`, and rotation must be zero. Icons, line placement,
+wrapping, rich formatted text and other unsupported fields produce errors.
+
+`from_text_field` accepts a plain string with MapLibre `{property}` tokens or a
+supported modern feature expression. Native `TextField` strings are literals;
+`to_text_field` exports those as explicit `literal` expressions so braces cannot
+accidentally become property tokens. These entry points do not use legacy filter
+classification. Native `type: "text"` belongs to core serde, not this adapter.
+
+The adapter handles style conversion only; font registration, shaping and label
+collision placement belong to the renderer. Expression validation and existing
+filter normalization remain independent of text placement.

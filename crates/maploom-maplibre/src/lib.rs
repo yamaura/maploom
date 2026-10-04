@@ -1,14 +1,14 @@
 #![doc = include_str!("../README.md")]
 
-use maploom_core::{Filter, Layer};
+use maploom_core::{Filter, Layer, TextField};
 use serde_json::{Value, json};
-use std::{error::Error as StdError, fmt};
 
 #[cfg(test)]
 mod tests;
 
 /// Unsupported or malformed compatibility input, including its layer index when applicable.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{message}")]
 pub struct Error {
     message: String,
 }
@@ -20,14 +20,6 @@ impl Error {
         }
     }
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.message.fmt(f)
-    }
-}
-
-impl StdError for Error {}
 
 /// Import a MapLibre filter, detecting legacy property filters or expression syntax.
 /// Null means an unrestricted filter. Mixed legacy/expression trees are rejected.
@@ -57,12 +49,50 @@ pub fn to_filter(filter: &Filter) -> Result<Value, Error> {
     Ok(value)
 }
 
-/// Import a supported MapLibre vector fill/line layer.
+/// Import fill/line layers or point text symbols. Icons and line placement are rejected.
 pub fn from_layer(value: &Value) -> Result<Layer, Error> {
     let mut value = value.clone();
     let object = value
         .as_object_mut()
         .ok_or_else(|| Error::new("layer must be an object"))?;
+    if object.get("type").and_then(Value::as_str) == Some("symbol") {
+        object.insert("type".into(), json!("text"));
+        if let Some(layout) = object.get_mut("layout").and_then(Value::as_object_mut) {
+            if layout.get("text-max-width").and_then(Value::as_f64) != Some(0.0) {
+                return Err(Error::new(
+                    "point text requires text-max-width: 0; automatic wrapping is unsupported",
+                ));
+            }
+            for (key, expected) in [
+                ("symbol-placement", json!("point")),
+                ("text-rotation-alignment", json!("viewport")),
+                ("text-pitch-alignment", json!("viewport")),
+                ("text-rotate", json!(0)),
+                ("text-max-width", json!(0)),
+            ] {
+                if let Some(actual) = layout.remove(key)
+                    && !(actual == expected
+                        || (expected.as_f64() == Some(0.0) && actual.as_f64() == Some(0.0)))
+                {
+                    return Err(Error::new(format!(
+                        "{key} must be {expected} for point text"
+                    )));
+                }
+            }
+            if let Some(field) = layout.get_mut("text-field") {
+                *field = serde_json::to_value(from_text_field(field)?)
+                    .map_err(|error| Error::new(error.to_string()))?;
+            }
+        } else {
+            return Err(Error::new(
+                "point text symbols require a layout with text-field, text-font and text-max-width: 0",
+            ));
+        }
+    } else if object.get("type").and_then(Value::as_str) == Some("text") {
+        return Err(Error::new(
+            "native text layers must be imported as MapLibre symbol layers",
+        ));
+    }
     if let Some(filter) = object.get_mut("filter")
         && !filter.is_null()
     {
@@ -81,7 +111,59 @@ pub fn to_layer(layer: &Layer) -> Result<Value, Error> {
     if let Some(filter) = layer.filter() {
         value["filter"] = to_filter(filter)?;
     }
+    if let Layer::Text(text) = layer {
+        value["type"] = json!("symbol");
+        let layout = value["layout"]
+            .as_object_mut()
+            .expect("serialized text layout");
+        layout.insert("symbol-placement".into(), json!("point"));
+        layout.insert("text-max-width".into(), json!(0));
+        layout.insert("text-rotation-alignment".into(), json!("viewport"));
+        layout.insert("text-pitch-alignment".into(), json!("viewport"));
+        layout.insert("text-field".into(), to_text_field(&text.layout.field)?);
+    }
     Ok(value)
+}
+
+/// Import a string-producing feature expression without filter syntax guessing.
+pub fn from_text_field(value: &Value) -> Result<TextField, Error> {
+    if let Some(template) = value.as_str() {
+        // Braces in MapLibre strings denote property tokens.
+        let mut args = vec![json!("concat")];
+        let mut remaining = template;
+        while let Some(open) = remaining.find('{') {
+            let Some(close) = remaining[open + 1..].find('}') else {
+                break;
+            };
+            let close = open + 1 + close;
+            let key = &remaining[open + 1..close];
+            if key.is_empty() || key.contains('{') {
+                break;
+            }
+            args.push(json!(&remaining[..open]));
+            args.push(json!(["to-string", ["get", key]]));
+            remaining = &remaining[close + 1..];
+        }
+        args.push(json!(remaining));
+        return serde_json::from_value(if args.len() == 2 {
+            args.pop().unwrap()
+        } else {
+            Value::Array(args)
+        })
+        .map_err(|error| Error::new(error.to_string()));
+    }
+    validate_expression(value)?;
+    serde_json::from_value(value.clone()).map_err(|error| Error::new(error.to_string()))
+}
+
+pub fn to_text_field(field: &TextField) -> Result<Value, Error> {
+    let value = serde_json::to_value(field).map_err(|error| Error::new(error.to_string()))?;
+    validate_expression(&value)?;
+    Ok(if value.is_string() {
+        json!(["literal", value])
+    } else {
+        value
+    })
 }
 
 /// Import a layer array in drawing order. Unsupported layers are errors, not skipped.
@@ -111,6 +193,14 @@ pub fn to_layers(layers: &[Layer]) -> Result<Value, Error> {
 }
 
 fn validate_layer(layer: &Layer) -> Result<(), Error> {
+    if let Layer::Text(text) = layer
+        && (text.layout.fonts.is_empty()
+            || text.layout.fonts.iter().any(|name| name.trim().is_empty()))
+    {
+        return Err(Error::new(
+            "text-font must name at least one explicit font family",
+        ));
+    }
     if layer.id().is_empty()
         || layer.source_layer().is_empty()
         || layer.source().is_none_or(str::is_empty)
@@ -290,12 +380,14 @@ fn validate_expression(value: &Value) -> Result<(), Error> {
         .ok_or_else(|| Error::new("missing expression operator"))?;
     let args = &items[1..];
     let valid_count = match op {
-        "literal" | "get" | "has" | "!" | "to-boolean" => args.len() == 1,
+        "literal" | "get" | "has" | "!" | "to-boolean" | "to-string" => args.len() == 1,
         "id" | "geometry-type" => args.is_empty(),
         "==" | "!=" | ">" | ">=" | "<" | "<=" | "in" | "/" | "%" => args.len() == 2,
         "-" => matches!(args.len(), 1 | 2),
         "+" | "*" => args.len() >= 2,
         "all" | "any" => true,
+        "concat" => !args.is_empty(),
+        "case" => args.len() >= 3 && !args.len().is_multiple_of(2),
         "coalesce" | "to-number" | "boolean" | "number" | "string" => !args.is_empty(),
         "match" => args.len() >= 4 && args.len().is_multiple_of(2),
         _ => {

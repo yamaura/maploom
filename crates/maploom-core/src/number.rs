@@ -198,3 +198,82 @@ impl Serialize for Number {
         seq.end()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn evaluates_and_round_trips_zoom_expressions() {
+        let linear = Number::Linear {
+            stops: vec![(4.0, 1.0), (10.0, 4.0)],
+        };
+        assert_eq!(linear.evaluate(3.0), Ok(1.0));
+        assert_eq!(linear.evaluate(7.0), Ok(2.5));
+        assert_eq!(linear.evaluate(11.0), Ok(4.0));
+        assert_eq!(
+            serde_json::to_value(&linear).unwrap(),
+            json!(["interpolate", ["linear"], ["zoom"], 4.0, 1.0, 10.0, 4.0])
+        );
+        let step = Number::Step {
+            default: 1.0,
+            stops: vec![(4.0, 2.0), (10.0, 3.0)],
+        };
+        assert_eq!(step.evaluate(3.0), Ok(1.0));
+        assert_eq!(step.evaluate(4.0), Ok(2.0));
+        assert_eq!(step.evaluate(10.0), Ok(3.0));
+        for value in [linear, step] {
+            assert_eq!(
+                serde_json::from_value::<Number>(serde_json::to_value(&value).unwrap()).unwrap(),
+                value
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_native_numbers_are_rejected() {
+        for value in [
+            Number::Constant(f64::NAN),
+            Number::Linear { stops: vec![] },
+            Number::Linear {
+                stops: vec![(4.0, 1.0), (4.0, 2.0)],
+            },
+            Number::Step {
+                default: 1.0,
+                stops: vec![(8.0, 1.0), (4.0, 2.0)],
+            },
+        ] {
+            assert!(value.evaluate(5.0).is_err());
+            assert!(serde_json::to_value(&value).is_err());
+        }
+    }
+
+    #[test]
+    fn unsupported_or_malformed_numeric_expressions_fail_at_deserialization() {
+        for value in [
+            json!(["interpolate", ["exponential", 2], ["zoom"], 0, 1, 10, 4]),
+            json!(["step", ["zoom"], 1, 2]),
+            json!(["step", ["zoom"], 1, 8, 1, 4, 2]),
+            json!(["get", "width"]),
+        ] {
+            assert!(serde_json::from_value::<Number>(value).is_err());
+        }
+    }
+
+    #[test]
+    fn malformed_numeric_expression_streams_are_rejected() {
+        for source in [
+            r#"["step", ["zoom", 1], 1, 2, 3]"#,
+            r#"["step", ["zoom"], 1, 2]"#,
+            r#"["interpolate", ["linear", 1], ["zoom"], 0, 1, 2, 3]"#,
+            r#"["interpolate", ["linear"], ["get", "zoom"], 0, 1, 2, 3]"#,
+            r#"["interpolate", ["linear"], ["zoom"], 0, 1, 2]"#,
+        ] {
+            assert!(
+                serde_json::from_str::<Number>(source).is_err(),
+                "accepted {source}"
+            );
+        }
+    }
+}

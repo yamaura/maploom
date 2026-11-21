@@ -35,6 +35,40 @@ fn label_layer() -> TextLayer {
 }
 
 #[test]
+fn wrapped_labels_share_collision_placement_across_the_antimeridian() {
+    let fonts = fonts::catalog();
+    let tiles = label_tiles(&[(128, 2048, "WEST"), (3968, 2048, "EAST")]);
+    for (allow_overlap, expected) in [(true, 2), (false, 1)] {
+        let mut layer = label_layer();
+        layer.layout.allow_overlap = allow_overlap;
+        let mut chunk = Chunk::new();
+        let mut next = Ref::new(10);
+        {
+            let mut writer = PdfMapWriter::new(&mut chunk, &mut next, &fonts);
+            writer
+                .write_wrapped_map(
+                    MapViewport::new(
+                        200.0,
+                        200.0,
+                        LngLatBounds {
+                            west: 157.5,
+                            east: 202.5,
+                            ..LngLatBounds::world()
+                        },
+                        0.0,
+                    ),
+                    &[Layer::Text(layer)],
+                    &tiles,
+                )
+                .unwrap();
+        }
+        let text = String::from_utf8_lossy(chunk.as_bytes());
+        assert_eq!(text.matches("/ActualText").count(), expected);
+        assert_eq!(text.matches("/Subtype /Form").count(), 1);
+    }
+}
+
+#[test]
 fn embeds_unicode_fonts_once_across_forms_and_preserves_actual_text() {
     let fonts = fonts::catalog();
     let tiles = label_tiles(&[(2048, 2048, "時年 fi בדה")]);

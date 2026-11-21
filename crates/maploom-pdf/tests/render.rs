@@ -251,3 +251,57 @@ fn validates_hidden_and_out_of_zoom_paints_before_accepting_a_style() {
 fn encode_tile(layers: Vec<MvtLayer>) -> Vec<u8> {
     MvtTile { layers }.encode().unwrap()
 }
+
+#[test]
+fn wrapped_maps_place_both_sides_of_the_antimeridian_in_one_form() {
+    let bytes = encode_tile(vec![MvtLayer {
+        name: "roads".into(),
+        extent: DEFAULT_EXTENT,
+        features: [128, 3968]
+            .into_iter()
+            .map(|x| {
+                MvtFeature::new(MvtGeometry::LineString(line_string![
+                    (x: x, y: 2048), (x: x, y: 2304),
+                ]))
+            })
+            .collect(),
+    }]);
+    let tiles = TileSet::decode(&[MvtTileInput::new(0, 0, 0, bytes)]).unwrap();
+    let layers = [Layer::Line(LineLayer::new("roads", "roads"))];
+    let mut reference = None;
+    for shift in [0.0, -360.0, 720.0] {
+        let view = MapViewport::new(
+            200.0,
+            200.0,
+            LngLatBounds {
+                west: 157.5 + shift,
+                east: 202.5 + shift,
+                ..LngLatBounds::world()
+            },
+            0.0,
+        );
+        let mut chunk = Chunk::new();
+        let mut next = Ref::new(10);
+        #[cfg(feature = "fonts")]
+        let fonts = FontCatalog::new();
+        #[cfg(feature = "fonts")]
+        let mut writer = PdfMapWriter::new(&mut chunk, &mut next, &fonts);
+        #[cfg(not(feature = "fonts"))]
+        let mut writer = PdfMapWriter::new(&mut chunk, &mut next);
+        assert!(matches!(
+            writer.write_map(view, &layers, &tiles),
+            Err(PdfRenderError::InvalidBounds)
+        ));
+        writer.write_wrapped_map(view, &layers, &tiles).unwrap();
+        drop(writer);
+        let text = String::from_utf8_lossy(chunk.as_bytes());
+        assert!(text.contains("93.75 100 m"));
+        assert!(text.contains("106.25 100 m"));
+        assert_eq!(text.matches("/Subtype /Form").count(), 1);
+        if let Some(expected) = &reference {
+            assert_eq!(chunk.as_bytes(), expected);
+        } else {
+            reference = Some(chunk.as_bytes().to_vec());
+        }
+    }
+}

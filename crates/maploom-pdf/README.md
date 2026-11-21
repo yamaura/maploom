@@ -106,7 +106,10 @@ hex RGB colors (`#rgb`, `#rrggbb`), opacity, line width/cap/join/dashes, filters
 zoom limits, visibility and numeric `step`/linear `interpolate` on zoom.
 Widths are PDF points (1/72 inch); dash lengths are multiples of line width.
 Bounds use Web Mercator, preserve aspect ratio and are centered in the map viewport.
-Antimeridian-crossing bounds are unsupported; split them before rendering.
+`write_map` requires bounds within the normalized world extent.
+`PdfMapWriter::write_wrapped_map` accepts continuous longitudes (for example,
+170..190), spanning at most 360°, and repeats canonical XYZ tiles across the
+antimeridian. Labels share one collision index across the complete view.
 
 Icons, line-following labels, automatic text wrapping, rotated text,
 circles, rasters, backgrounds, terrain, patterns, data-driven paint expressions

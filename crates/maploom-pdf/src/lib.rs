@@ -172,6 +172,12 @@ impl TileSet {
             tiles: decode_tiles(inputs)?,
         })
     }
+
+    fn world_copies(&self, count: u8) -> impl Iterator<Item = (&DecodedTile, u8)> {
+        self.tiles
+            .iter()
+            .flat_map(move |tile| (0..count).map(move |offset| (tile, offset)))
+    }
 }
 
 /// Invalid rendering input or failure to decode a tile.
@@ -280,7 +286,29 @@ impl<'document, 'fonts, 'data> PdfMapWriter<'document, 'fonts, 'data> {
         layers: &[Layer],
         tiles: &TileSet,
     ) -> Result<MapXObject, PdfRenderError> {
-        let viewport = Viewport::new(view)?;
+        self.write_map_inner(view, layers, tiles, false)
+    }
+
+    /// Write a horizontally repeating map from canonical XYZ tiles.
+    /// Bounds use continuous longitudes (e.g. 170..190), spanning at most 360°.
+    /// Text placement and collisions are shared across the antimeridian.
+    pub fn write_wrapped_map(
+        &mut self,
+        view: MapViewport,
+        layers: &[Layer],
+        tiles: &TileSet,
+    ) -> Result<MapXObject, PdfRenderError> {
+        self.write_map_inner(view, layers, tiles, true)
+    }
+
+    fn write_map_inner(
+        &mut self,
+        view: MapViewport,
+        layers: &[Layer],
+        tiles: &TileSet,
+        wrap: bool,
+    ) -> Result<MapXObject, PdfRenderError> {
+        let viewport = Viewport::new(view, wrap)?;
         let compiled_layers = compile_layers(layers, view.zoom)?;
         #[cfg(feature = "fonts")]
         let mut labels = prepare_labels(&compiled_layers, tiles, viewport, view, self.fonts)?;
@@ -314,7 +342,7 @@ impl<'document, 'fonts, 'data> PdfMapWriter<'document, 'fonts, 'data> {
                 }
                 continue;
             }
-            for tile in &tiles.tiles {
+            for (tile, world_offset) in tiles.world_copies(viewport.world_copies) {
                 if compiled
                     .source
                     .as_deref()
@@ -330,15 +358,16 @@ impl<'document, 'fonts, 'data> PdfMapWriter<'document, 'fonts, 'data> {
                 else {
                     continue;
                 };
-                let transform = TileTransform::new(tile.z, tile.x, tile.y, layer.extent.get());
+                let transform =
+                    TileTransform::new(tile.z, tile.x, tile.y, layer.extent.get(), world_offset);
                 // Tile buffers must not darken adjacent translucent geometry.
                 let scale = 2.0_f64.powi(i32::from(tile.z));
                 let (left, top) = viewport.point(WorldPoint {
-                    x: f64::from(tile.x) / scale,
+                    x: f64::from(tile.x) / scale + f64::from(world_offset),
                     y: f64::from(tile.y) / scale,
                 });
                 let (right, bottom) = viewport.point(WorldPoint {
-                    x: (f64::from(tile.x) + 1.0) / scale,
+                    x: (f64::from(tile.x) + 1.0) / scale + f64::from(world_offset),
                     y: (f64::from(tile.y) + 1.0) / scale,
                 });
                 content.save_state();
@@ -460,7 +489,7 @@ fn prepare_labels(
             && style.size > 0.0
             && style.opacity > 0.0
         {
-            for tile in &tiles.tiles {
+            for (tile, world_offset) in tiles.world_copies(viewport.world_copies) {
                 if compiled
                     .source
                     .as_deref()
@@ -476,7 +505,8 @@ fn prepare_labels(
                 else {
                     continue;
                 };
-                let transform = TileTransform::new(tile.z, tile.x, tile.y, layer.extent.get());
+                let transform =
+                    TileTransform::new(tile.z, tile.x, tile.y, layer.extent.get(), world_offset);
                 for feature in &layer.features {
                     if !compiled.matches(feature) {
                         continue;
@@ -601,22 +631,25 @@ struct TileTransform {
     x: u32,
     y: u32,
     extent: f64,
+    world_offset: u8,
 }
 
 impl TileTransform {
-    fn new(z: u8, x: u32, y: u32, extent: u32) -> Self {
+    fn new(z: u8, x: u32, y: u32, extent: u32, world_offset: u8) -> Self {
         Self {
             z,
             x,
             y,
             extent: f64::from(extent),
+            world_offset,
         }
     }
 
     fn world(self, coord: Coord<i32>) -> WorldPoint {
         let scale = 2.0_f64.powi(i32::from(self.z));
         WorldPoint {
-            x: (f64::from(self.x) + f64::from(coord.x) / self.extent) / scale,
+            x: (f64::from(self.x) + f64::from(coord.x) / self.extent) / scale
+                + f64::from(self.world_offset),
             y: (f64::from(self.y) + f64::from(coord.y) / self.extent) / scale,
         }
     }
@@ -630,10 +663,11 @@ struct Viewport {
     offset_x_pt: f64,
     offset_y_pt: f64,
     height_pt: f32,
+    world_copies: u8,
 }
 
 impl Viewport {
-    fn new(view: MapViewport) -> Result<Self, PdfRenderError> {
+    fn new(view: MapViewport, wrap: bool) -> Result<Self, PdfRenderError> {
         if !view.zoom.is_finite() || view.zoom < 0.0 {
             return Err(PdfRenderError::InvalidZoom);
         }
@@ -641,8 +675,8 @@ impl Viewport {
         if ![bounds.west, bounds.east, bounds.south, bounds.north]
             .iter()
             .all(|v| v.is_finite())
-            || bounds.west < -180.0
-            || bounds.east > 180.0
+            || (!wrap && (bounds.west < -180.0 || bounds.east > 180.0))
+            || (wrap && bounds.east - bounds.west > 360.0 + 1e-7)
             || bounds.south < -WEB_MERCATOR_MAX_LATITUDE
             || bounds.north > WEB_MERCATOR_MAX_LATITUDE
         {
@@ -659,11 +693,23 @@ impl Viewport {
             });
         }
 
-        let west = longitude_to_world_x(view.bounds.west);
-        let east = longitude_to_world_x(view.bounds.east);
+        let longitude_span = if wrap {
+            (bounds.east - bounds.west).min(360.0)
+        } else {
+            bounds.east - bounds.west
+        };
+        let west = longitude_to_world_x(if wrap {
+            (bounds.west + 180.0).rem_euclid(360.0) - 180.0
+        } else {
+            bounds.west
+        });
         let north = latitude_to_world_y(view.bounds.north);
         let south = latitude_to_world_y(view.bounds.south);
-        let width = east - west;
+        let width = if wrap {
+            longitude_span / 360.0
+        } else {
+            longitude_to_world_x(bounds.east) - west
+        };
         let height = south - north;
         if width <= 0.0 || height <= 0.0 || !width.is_finite() || !height.is_finite() {
             return Err(PdfRenderError::InvalidBounds);
@@ -680,6 +726,7 @@ impl Viewport {
             offset_x_pt: (f64::from(view.width_pt) - rendered_width_pt) * 0.5,
             offset_y_pt: (f64::from(view.height_pt) - rendered_height_pt) * 0.5,
             height_pt: view.height_pt,
+            world_copies: if wrap && west + width > 1.0 { 2 } else { 1 },
         })
     }
 
@@ -793,11 +840,50 @@ mod tests {
 
     #[test]
     fn viewport_preserves_aspect_ratio() {
-        let viewport =
-            Viewport::new(MapViewport::new(300.0, 200.0, LngLatBounds::world(), 0.0)).unwrap();
+        let viewport = Viewport::new(
+            MapViewport::new(300.0, 200.0, LngLatBounds::world(), 0.0),
+            false,
+        )
+        .unwrap();
 
         assert_point_near(viewport.point(WorldPoint { x: 0.0, y: 0.0 }), (50.0, 200.0));
         assert_point_near(viewport.point(WorldPoint { x: 1.0, y: 1.0 }), (250.0, 0.0));
+    }
+
+    #[test]
+    fn wrapped_viewport_validates_continuous_bounds() {
+        for (west, east) in [
+            (170.0, -170.0),
+            (0.0, 361.0),
+            (180.0, 180.0),
+            (f64::NAN, 190.0),
+        ] {
+            let view = MapViewport::new(
+                200.0,
+                200.0,
+                LngLatBounds {
+                    west,
+                    east,
+                    ..LngLatBounds::world()
+                },
+                0.0,
+            );
+            assert!(matches!(
+                Viewport::new(view, true),
+                Err(PdfRenderError::InvalidBounds)
+            ));
+        }
+        let view = MapViewport::new(
+            200.0,
+            200.0,
+            LngLatBounds {
+                west: 20.0,
+                east: 380.0 + 1e-8,
+                ..LngLatBounds::world()
+            },
+            0.0,
+        );
+        assert!(Viewport::new(view, true).is_ok());
     }
 
     fn assert_point_near(actual: (f32, f32), expected: (f32, f32)) {
@@ -858,7 +944,7 @@ mod tests {
             (4096, 2048, "Next"),
         ]);
         let view = MapViewport::new(200.0, 200.0, LngLatBounds::world(), 0.0);
-        let viewport = Viewport::new(view).unwrap();
+        let viewport = Viewport::new(view, false).unwrap();
         let mut first = label_layer();
         let mut second = first.clone();
         second.id = "second".into();
